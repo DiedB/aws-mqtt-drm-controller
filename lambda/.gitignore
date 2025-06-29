@@ -1,0 +1,37 @@
+# Go build artifacts
+main
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test artifacts
+*.test
+*.out
+
+# Go coverage files
+*.cover
+*.coverprofile
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/ 
