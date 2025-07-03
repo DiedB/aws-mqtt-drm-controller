@@ -30,15 +30,34 @@ resource "aws_iot_policy" "shelly_device_policy" {
       {
         Effect = "Allow"
         Action = [
-          "iot:*"
+          "iot:Connect"
         ]
         Resource = [
-          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:client/${var.client_id}"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iot:Subscribe"
+        ]
+        Resource = [
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/shellies/*",
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.client_id}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iot:Publish"
+        ]
+        Resource = [
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/shellies/announce",
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.client_id}/*"
         ]
       }
     ]
   })
-
 }
 
 # IoT Core Thing for Shelly device
@@ -98,7 +117,7 @@ resource "aws_iam_policy" "lambda_iot_policy" {
           "iot:Publish"
         ]
         Resource = [
-          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.client_id}/command/*"
+          "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.client_id}/command/switch:0"
         ]
       }
     ]
@@ -137,7 +156,7 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   output_path = "${path.module}/lambda/dist/lambda.zip"
   source_file = "${path.module}/lambda/dist/bootstrap"
-  
+
   depends_on = [null_resource.build_lambda]
 }
 
@@ -145,12 +164,12 @@ data "archive_file" "lambda_zip" {
 resource "aws_lambda_function" "solar_controller" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = "solar-controller"
-  role            = aws_iam_role.lambda_execution_role.arn
-  handler         = "bootstrap"
-  runtime         = "provided.al2023"
-  architectures   = ["arm64"]
-  timeout         = 15
-  memory_size     = 128
+  role             = aws_iam_role.lambda_execution_role.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
+  timeout          = 15
+  memory_size      = 128
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {
@@ -172,9 +191,8 @@ resource "aws_cloudwatch_event_rule" "hourly_trigger" {
 
 # EventBridge target to invoke Lambda
 resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.hourly_trigger.name
-  target_id = "SolarControllerLambda"
-  arn       = aws_lambda_function.solar_controller.arn
+  rule = aws_cloudwatch_event_rule.hourly_trigger.name
+  arn  = aws_lambda_function.solar_controller.arn
 }
 
 # Permission for EventBridge to invoke Lambda

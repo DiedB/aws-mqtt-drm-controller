@@ -18,7 +18,6 @@ import (
 const (
 	PURCHASE_FEE_FEED_IN  = -0.012705
 	FRANK_ENERGIE_API_URL = "https://www.frankenergie.nl/graphql"
-	CONTRACT_START_DATE   = "2025-07-02T00:00:00+02:00" // July 2, 2025 CEST
 )
 
 // GraphQL request structure
@@ -52,14 +51,6 @@ type IoTCommand struct {
 }
 
 func handler(ctx context.Context) error {
-	log.Println("Starting solar panel control Lambda function")
-
-	// Check if the new contract is effective
-	if !isContractEffective() {
-		log.Println("New energy contract not yet effective. Skipping solar panel control.")
-		return nil
-	}
-
 	// Get current date in the required format
 	now := time.Now()
 	date := now.Format("2006-01-02")
@@ -82,13 +73,14 @@ func handler(ctx context.Context) error {
 
 	// Apply the decision logic
 	effectivePrice := currentPrice + PURCHASE_FEE_FEED_IN
+
 	shouldDisableSolar := effectivePrice < 0
 
 	log.Printf("Effective price (market + feed-in fee): €%.5f/kWh", effectivePrice)
 	log.Printf("Should disable solar inverter: %t", shouldDisableSolar)
 
 	// Send command to IoT Core via HTTPS
-	err = sendIoTCommand(ctx, shouldDisableSolar, effectivePrice)
+	err = sendIoTCommand(ctx, shouldDisableSolar)
 	if err != nil {
 		log.Printf("Error sending IoT command: %v", err)
 		return err
@@ -96,23 +88,6 @@ func handler(ctx context.Context) error {
 
 	log.Printf("Solar panel control completed successfully")
 	return nil
-}
-
-func isContractEffective() bool {
-	contractStart, err := time.Parse(time.RFC3339, CONTRACT_START_DATE)
-	if err != nil {
-		log.Printf("Error parsing contract start date: %v", err)
-		return false
-	}
-
-	now := time.Now()
-	isEffective := now.After(contractStart) || now.Equal(contractStart)
-
-	log.Printf("Contract start date: %s", contractStart.Format(time.RFC3339))
-	log.Printf("Current time: %s", now.Format(time.RFC3339))
-	log.Printf("Contract effective: %t", isEffective)
-
-	return isEffective
 }
 
 func fetchMarketPrices(date string) ([]ElectricityPrice, error) {
@@ -194,7 +169,7 @@ func getCurrentHourPrice(prices []ElectricityPrice, currentTime time.Time) (floa
 	return 0, fmt.Errorf("no price found for current hour: %s", currentUTC.Format(time.RFC3339))
 }
 
-func sendIoTCommand(ctx context.Context, shouldDisable bool, effectivePrice float64) error {
+func sendIoTCommand(ctx context.Context, shouldDisable bool) error {
 	// Get IoT Core endpoint and Shelly client ID from environment variables
 	iotEndpoint := os.Getenv("IOT_ENDPOINT")
 	shellyClientId := os.Getenv("SHELLY_CLIENT_ID")
@@ -219,29 +194,16 @@ func sendIoTCommand(ctx context.Context, shouldDisable bool, effectivePrice floa
 
 	// Prepare IoT command
 	command := "off"
-	reason := fmt.Sprintf("Effective price (€%.5f/kWh) >= 0 - solar production profitable", effectivePrice)
 
 	if shouldDisable {
 		command = "on"
-		reason = fmt.Sprintf("Effective price (€%.5f/kWh) < 0 - disabling solar production", effectivePrice)
 	}
 
-	iotCommand := IoTCommand{
-		Command:   command,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Reason:    reason,
-	}
-
-	payload, err := json.Marshal(iotCommand)
-	if err != nil {
-		return fmt.Errorf("error marshaling IoT command: %w", err)
-	}
-
-	// Publish to IoT Core via HTTPS using the correct topic format
+	// Publish to IoT Core
 	topic := fmt.Sprintf("%s/command/switch:0", shellyClientId)
 	input := &iotdataplane.PublishInput{
 		Topic:   &topic,
-		Payload: payload,
+		Payload: []byte(command),
 	}
 
 	_, err = iotClient.Publish(ctx, input)
